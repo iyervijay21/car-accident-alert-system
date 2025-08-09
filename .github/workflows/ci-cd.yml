@@ -1,0 +1,116 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Backend Testing
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+    
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+    
+    - name: Run backend tests
+      run: |
+        cd backend
+        python -m pytest tests/ -v
+
+  # Frontend Testing
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js 18
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+    
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run frontend tests
+      run: |
+        cd frontend
+        npm test
+
+  # Build and Deploy
+  build-and-deploy:
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Build backend Docker image
+      run: |
+        cd backend
+        docker build -t car-accident-backend .
+    
+    - name: Build frontend Docker image
+      run: |
+        cd frontend
+        docker build -t car-accident-frontend .
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Push backend image to Docker Hub
+      run: |
+        docker tag car-accident-backend ${{ secrets.DOCKER_USERNAME }}/car-accident-backend:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/car-accident-backend:latest
+    
+    - name: Push frontend image to Docker Hub
+      run: |
+        docker tag car-accident-frontend ${{ secrets.DOCKER_USERNAME }}/car-accident-frontend:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/car-accident-frontend:latest
+
+  # ML Model Retraining
+  ml-retrain:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, 'retrain-model')
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+    
+    - name: Retrain model
+      run: |
+        cd backend
+        python ml/train.py --data sample_training_data.csv --model updated_model.h5
+    
+    - name: Commit updated model
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add backend/updated_model.h5
+        git commit -m "Update trained model" || echo "No changes to commit"
+        git push
